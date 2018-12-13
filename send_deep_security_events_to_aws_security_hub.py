@@ -165,7 +165,6 @@ def convert_deep_security_event_to_aff(deep_security_event):
 			'trend-micro:TenantName': deep_security_event['TenantName'],
 			'trend-micro:TenantID': str(deep_security_event['TenantID']),
 			'trend-micro:EventID': str(deep_security_event['EventID']),
-			'trend-micro:HostAssetValue': str(deep_security_event['HostAssetValue']),
 			'trend-micro:HostGroupID': str(deep_security_event['HostGroupID']),
 			'trend-micro:HostGroupName': deep_security_event['HostGroupName'],
 			'trend-micro:HostID': str(deep_security_event['HostID']),
@@ -190,6 +189,8 @@ def convert_deep_security_event_to_aff(deep_security_event):
 		aff_format['ProductFields']['trend-micro:Tags'] = deep_security_event['Tags']
 	if 'OriginString' in deep_security_event:
 		aff_format['ProductFields']['trend-micro:Origin'] = deep_security_event['OriginString']
+#	if 'HostAssetValue' in deep_security_event:
+#		aff_format['ProductFields']['trend-micro:HostAssetValue'] = str(deep_security_event['HostAssetValue']),
 
 	# Apply custom properties based on Deep Security event type
 	if deep_security_event['EventType'] == "SystemEvent": 
@@ -287,16 +288,19 @@ def get_security_hub_client(acct_number=None):
 		if sts_response and 'Credentials' in sts_response:
 			credentials = sts_response['Credentials']
 
-	if os.environ["AWS_REGION"]:
-		if credentials:
-			securityhub = boto3.client("securityhub", region_name=os.environ["AWS_REGION"], aws_access_key_id=credentials['AccessKeyId'], aws_secret_access_key=credentials['SecretAccessKey'], aws_session_token=credentials['SessionToken'])
-		else:
-			securityhub = boto3.client("securityhub", region_name=os.environ["AWS_REGION"])
-	else:
-		if credentials:
-			securityhub = boto3.client("securityhub", aws_access_key_id=credentials['AccessKeyId'], aws_secret_access_key=credentials['SecretAccessKey'], aws_session_token=credentials['SessionToken'])
-		else:
-			securityhub = boto3.client("securityhub")
+	try:
+	        if os.environ["AWS_REGION"]:
+		        if credentials:
+				securityhub = boto3.client("securityhub", region_name=os.environ["AWS_REGION"], aws_access_key_id=credentials['AccessKeyId'], aws_secret_access_key=credentials['SecretAccessKey'], aws_session_token=credentials['SessionToken'])
+		        else:
+				securityhub = boto3.client("securityhub", region_name=os.environ["AWS_REGION"])
+	        else:
+		        if credentials:
+				securityhub = boto3.client("securityhub", aws_access_key_id=credentials['AccessKeyId'], aws_secret_access_key=credentials['SecretAccessKey'], aws_session_token=credentials['SessionToken'])
+		        else:
+				securityhub = boto3.client("securityhub")
+        except Exception as err:
+		print("Could not create securityhub: {}".format(err))
 
 	return securityhub
 
@@ -312,14 +316,14 @@ def send_events_to_hub(aff_events, acct_number=None):
 	try:
 		result = securityhub.batch_import_findings(Findings=aff_events)
 	except Exception as err:
-		if 'AccessDeniedException' in err.message:
-			if 'not authorized to perform' in err.message:
-				# The function does not have sufficient permissions to call BatchImportFindings
-				# and most likely needs a cross-account role setup
-				print("Insufficient permissions to send findings to the AWS Security Hub. A cross-account role is required for any findings that are not from the current account. Please use the provided CloudFormation template to create the required role in account [{}]".format(acct_number))
-			else:
-				print("Could not send findings to AWS Security Hub. Threw exception:\n{}".format(err))
-		else:
+#		if 'AccessDeniedException' in err:
+#			if 'not authorized to perform' in err:
+#				# The function does not have sufficient permissions to call BatchImportFindings
+#				# and most likely needs a cross-account role setup
+#				print("Insufficient permissions to send findings to the AWS Security Hub. A cross-account role is required for any findings that are not from the current account. Please use the provided CloudFormation template to create the required role in account [{}]".format(acct_number))
+#			else:
+#				print("Could not send findings to AWS Security Hub. Threw exception:\n{}".format(err))
+#		else:
 			print("Could not send findings to AWS Security Hub. Threw exception:\n{}".format(err))
 
 	if 'ResponseMetadata' in result and 'HTTPStatusCode' in result['ResponseMetadata']:
@@ -363,11 +367,12 @@ def lambda_handler(event, context):
 								forward_event = evaluate_deep_security_event(deep_security_event)
 								if forward_event:
 									print("Important security event detected, queuing to send to AWS Security Hub")
-									aff_event = convert_deep_security_event_to_aff(deep_security_event)
+									try:
+										aff_event = convert_deep_security_event_to_aff(deep_security_event)
+									except Exception as err:
+										print("Convert Error : {}".format(err))
 									aff_events.append(aff_event)
 									forwarded_events += 1
-								else:
-									print("Security event does not meet the criteria to send to AWS Security Hub")
 							else:
 								print("Specified event does not have the required properties to properly process it")
 
@@ -387,4 +392,4 @@ def lambda_handler(event, context):
 	return {
 		'total_events': total_events,
 		'events_forwarded': forwarded_events,
-	}								
+	}
